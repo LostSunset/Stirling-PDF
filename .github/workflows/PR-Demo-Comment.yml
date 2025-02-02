@@ -27,7 +27,8 @@ jobs:
         github.event.comment.user.login == 'LaserKaspar' ||
         github.event.comment.user.login == 'sbplat' ||
         github.event.comment.user.login == 'reecebrowne' ||
-        github.event.comment.user.login == 'DarioGii'
+        github.event.comment.user.login == 'DarioGii' ||
+        github.event.comment.user.login == 'ConnorYoh'
       )
     outputs:
       pr_number: ${{ steps.get-pr.outputs.pr_number }}
@@ -119,7 +120,7 @@ jobs:
           password: ${{ secrets.DOCKER_HUB_API }}
 
       - name: Build and push PR-specific image
-        uses: docker/build-push-action@67a2d409c0a876cbe6b11854e3e25193efe4e62d # v6.12.0
+        uses: docker/build-push-action@ca877d9245402d1537745e0e356eab47c3520991 # v6.13.0
         with:
           context: .
           file: ./Dockerfile
