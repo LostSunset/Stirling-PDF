@@ -5,6 +5,7 @@ import java.awt.image.BufferedImage;
 import java.io.ByteArrayOutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -30,6 +31,7 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 
 import lombok.extern.slf4j.Slf4j;
+
 import stirling.software.SPDF.model.api.misc.OptimizePdfRequest;
 import stirling.software.SPDF.service.CustomPDDocumentFactory;
 import stirling.software.SPDF.utils.GeneralUtils;
@@ -50,7 +52,7 @@ public class CompressController {
         this.pdfDocumentFactory = pdfDocumentFactory;
     }
 
-    private void compressImagesInPDF(Path pdfFile, double initialScaleFactor) throws Exception {
+    private void compressImagesInPDF(Path pdfFile, double initialScaleFactor, boolean grayScale) throws Exception {
         byte[] fileBytes = Files.readAllBytes(pdfFile);
         try (PDDocument doc = Loader.loadPDF(fileBytes)) {
             double scaleFactor = initialScaleFactor;
@@ -75,11 +77,23 @@ public class CompressController {
                                     bufferedImage.getScaledInstance(
                                             newWidth, newHeight, Image.SCALE_SMOOTH);
 
-                            BufferedImage scaledBufferedImage =
-                                    new BufferedImage(
-                                            newWidth, newHeight, BufferedImage.TYPE_INT_RGB);
-                            scaledBufferedImage.getGraphics().drawImage(scaledImage, 0, 0, null);
-
+                            BufferedImage scaledBufferedImage;
+                            if (grayScale
+                                    || bufferedImage.getType() == BufferedImage.TYPE_BYTE_GRAY) {
+                                scaledBufferedImage =
+                                        new BufferedImage(
+                                                newWidth, newHeight, BufferedImage.TYPE_BYTE_GRAY);
+                                scaledBufferedImage
+                                        .getGraphics()
+                                        .drawImage(scaledImage, 0, 0, null);
+                            } else {
+                                scaledBufferedImage =
+                                        new BufferedImage(
+                                                newWidth, newHeight, BufferedImage.TYPE_INT_RGB);
+                                scaledBufferedImage
+                                        .getGraphics()
+                                        .drawImage(scaledImage, 0, 0, null);
+                            }
                             ByteArrayOutputStream compressedImageStream =
                                     new ByteArrayOutputStream();
                             ImageIO.write(scaledBufferedImage, "jpeg", compressedImageStream);
@@ -94,7 +108,9 @@ public class CompressController {
                     }
                 }
             }
-            doc.save(pdfFile.toString());
+            Path tempOutput = Files.createTempFile("output_", ".pdf");
+            doc.save(tempOutput.toString());
+            Files.move(tempOutput, pdfFile, StandardCopyOption.REPLACE_EXISTING);
         }
     }
 
@@ -136,6 +152,7 @@ public class CompressController {
             }
 
             boolean sizeMet = false;
+            boolean grayscaleEnabled = Boolean.TRUE.equals(request.getGrayscale());
             while (!sizeMet && optimizeLevel <= 9) {
 
                 // Apply additional image compression for levels 6-9
@@ -149,7 +166,7 @@ public class CompressController {
                                 case 9 -> 0.5; // 60% of original size
                                 default -> 1.0;
                             };
-                    compressImagesInPDF(tempInputFile, scaleFactor);
+                    compressImagesInPDF(tempInputFile, scaleFactor, grayscaleEnabled);
                 }
 
                 // Run QPDF optimization
@@ -166,6 +183,7 @@ public class CompressController {
                 command.add("--compression-level=" + optimizeLevel);
                 command.add("--compress-streams=y");
                 command.add("--object-streams=generate");
+                command.add("--no-warn");
                 command.add(tempInputFile.toString());
                 command.add(tempOutputFile.toString());
 
@@ -188,7 +206,7 @@ public class CompressController {
                     optimizeLevel =
                             incrementOptimizeLevel(
                                     optimizeLevel, outputFileSize, expectedOutputSize);
-                    if (autoMode && optimizeLevel > 9) {
+                    if (autoMode && optimizeLevel >= 9) {
                         log.info("Maximum compression level reached in auto mode");
                         sizeMet = true;
                     }
