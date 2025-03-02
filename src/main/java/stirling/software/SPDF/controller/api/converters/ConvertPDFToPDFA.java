@@ -21,6 +21,7 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 
 import lombok.extern.slf4j.Slf4j;
+
 import stirling.software.SPDF.model.api.converters.PdfToPdfARequest;
 import stirling.software.SPDF.utils.ProcessExecutor;
 import stirling.software.SPDF.utils.ProcessExecutor.ProcessExecutorResult;
@@ -73,8 +74,8 @@ public class ConvertPDFToPDFA {
             // Determine PDF/A filter based on requested format
             String pdfFilter =
                     "pdfa".equals(outputFormat)
-                            ? "writer_pdf_Export:{'SelectPdfVersion':{'Value':'2'}}:writer_pdf_Export"
-                            : "writer_pdf_Export:{'SelectPdfVersion':{'Value':'1'}}:writer_pdf_Export";
+                            ? "pdf:writer_pdf_Export:{\"SelectPdfVersion\":{\"type\":\"long\",\"value\":\"2\"}}"
+                            : "pdf:writer_pdf_Export:{\"SelectPdfVersion\":{\"type\":\"long\",\"value\":\"1\"}}";
 
             // Prepare LibreOffice command
             List<String> command =
@@ -84,7 +85,7 @@ public class ConvertPDFToPDFA {
                                     "--headless",
                                     "--nologo",
                                     "--convert-to",
-                                    "pdf:" + pdfFilter,
+                                    pdfFilter,
                                     "--outdir",
                                     tempOutputDir.toString(),
                                     tempInputFile.toString()));

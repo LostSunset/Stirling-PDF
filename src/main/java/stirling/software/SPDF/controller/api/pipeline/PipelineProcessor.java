@@ -29,10 +29,13 @@ import io.github.pixee.security.Filenames;
 import io.github.pixee.security.ZipSecurity;
 
 import jakarta.servlet.ServletContext;
+
 import lombok.extern.slf4j.Slf4j;
+
 import stirling.software.SPDF.SPDFApplication;
 import stirling.software.SPDF.model.PipelineConfig;
 import stirling.software.SPDF.model.PipelineOperation;
+import stirling.software.SPDF.model.PipelineResult;
 import stirling.software.SPDF.model.Role;
 
 @Service
@@ -84,8 +87,10 @@ public class PipelineProcessor {
         return "http://localhost:" + port + contextPath + "/";
     }
 
-    List<Resource> runPipelineAgainstFiles(List<Resource> outputFiles, PipelineConfig config)
+    PipelineResult runPipelineAgainstFiles(List<Resource> outputFiles, PipelineConfig config)
             throws Exception {
+        PipelineResult result = new PipelineResult();
+
         ByteArrayOutputStream logStream = new ByteArrayOutputStream();
         PrintStream logPrintStream = new PrintStream(logStream);
         boolean hasErrors = false;
@@ -113,9 +118,8 @@ public class PipelineProcessor {
                             MultiValueMap<String, Object> body = new LinkedMultiValueMap<>();
                             body.add("fileInput", file);
                             for (Entry<String, Object> entry : parameters.entrySet()) {
-                                if (entry.getValue() instanceof List) {
-                                    List<?> list = (List<?>) entry.getValue();
-                                    for (Object item : list) {
+                                if (entry.getValue() instanceof List<?> entryList) {
+                                    for (Object item : entryList) {
                                         body.add(entry.getKey(), item);
                                     }
                                 } else {
@@ -130,10 +134,11 @@ public class PipelineProcessor {
                             if (operation.startsWith("filter-")
                                     && (response.getBody() == null
                                             || response.getBody().length == 0)) {
-                                log.info("Skipping file due to failing {}", operation);
+                                result.setFiltersApplied(true);
+                                log.info("Skipping file due to filtering {}", operation);
                                 continue;
                             }
-                            if (!response.getStatusCode().equals(HttpStatus.OK)) {
+                            if (!HttpStatus.OK.equals(response.getStatusCode())) {
                                 logPrintStream.println("Error: " + response.getBody());
                                 hasErrors = true;
                                 continue;
@@ -174,9 +179,8 @@ public class PipelineProcessor {
                         body.add("fileInput", file);
                     }
                     for (Entry<String, Object> entry : parameters.entrySet()) {
-                        if (entry.getValue() instanceof List) {
-                            List<?> list = (List<?>) entry.getValue();
-                            for (Object item : list) {
+                        if (entry.getValue() instanceof List<?> entryList) {
+                            for (Object item : entryList) {
                                 body.add(entry.getKey(), item);
                             }
                         } else {
@@ -185,7 +189,7 @@ public class PipelineProcessor {
                     }
                     ResponseEntity<byte[]> response = sendWebRequest(url, body);
                     // Handle the response
-                    if (response.getStatusCode().equals(HttpStatus.OK)) {
+                    if (HttpStatus.OK.equals(response.getStatusCode())) {
                         processOutputFiles(operation, response, newOutputFiles);
                     } else {
                         // Log error if the response status is not OK
@@ -208,7 +212,10 @@ public class PipelineProcessor {
         if (hasErrors) {
             log.error("Errors occurred during processing. Log: {}", logStream.toString());
         }
-        return outputFiles;
+        result.setHasErrors(hasErrors);
+        result.setFiltersApplied(hasErrors);
+        result.setOutputFiles(outputFiles);
+        return result;
     }
 
     private ResponseEntity<byte[]> sendWebRequest(String url, MultiValueMap<String, Object> body) {

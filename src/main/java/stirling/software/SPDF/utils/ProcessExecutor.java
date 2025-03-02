@@ -1,6 +1,10 @@
 package stirling.software.SPDF.utils;
 
-import java.io.*;
+import java.io.BufferedReader;
+import java.io.File;
+import java.io.IOException;
+import java.io.InputStreamReader;
+import java.io.InterruptedIOException;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
@@ -12,6 +16,7 @@ import java.util.concurrent.TimeUnit;
 import io.github.pixee.security.BoundedLineReader;
 
 import lombok.extern.slf4j.Slf4j;
+
 import stirling.software.SPDF.model.ApplicationProperties;
 
 @Slf4j
@@ -218,7 +223,10 @@ public class ProcessExecutor {
             errorReaderThread.join();
             outputReaderThread.join();
 
-            if (outputLines.size() > 0) {
+            boolean isQpdf =
+                    command != null && !command.isEmpty() && command.get(0).contains("qpdf");
+
+            if (!outputLines.isEmpty()) {
                 String outputMessage = String.join("\n", outputLines);
                 messages += outputMessage;
                 if (!liveUpdates) {
@@ -226,27 +234,35 @@ public class ProcessExecutor {
                 }
             }
 
-            if (errorLines.size() > 0) {
+            if (!errorLines.isEmpty()) {
                 String errorMessage = String.join("\n", errorLines);
                 messages += errorMessage;
                 if (!liveUpdates) {
                     log.warn("Command error output:\n" + errorMessage);
                 }
                 if (exitCode != 0) {
-                    throw new IOException(
-                            "Command process failed with exit code "
-                                    + exitCode
-                                    + ". Error message: "
-                                    + errorMessage);
+                    if (isQpdf && exitCode == 3) {
+                        log.warn("qpdf succeeded with warnings: {}", messages);
+                    } else {
+                        throw new IOException(
+                                "Command process failed with exit code "
+                                        + exitCode
+                                        + ". Error message: "
+                                        + errorMessage);
+                    }
                 }
             }
 
             if (exitCode != 0) {
-                throw new IOException(
-                        "Command process failed with exit code "
-                                + exitCode
-                                + "\nLogs: "
-                                + messages);
+                if (isQpdf && exitCode == 3) {
+                    log.warn("qpdf succeeded with warnings: {}", messages);
+                } else {
+                    throw new IOException(
+                            "Command process failed with exit code "
+                                    + exitCode
+                                    + "\nLogs: "
+                                    + messages);
+                }
             }
         } finally {
             semaphore.release();

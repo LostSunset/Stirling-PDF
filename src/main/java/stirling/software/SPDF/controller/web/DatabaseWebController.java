@@ -11,6 +11,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import io.swagger.v3.oas.annotations.tags.Tag;
 
 import jakarta.servlet.http.HttpServletRequest;
+
 import stirling.software.SPDF.config.security.database.DatabaseService;
 import stirling.software.SPDF.utils.FileInfo;
 
@@ -36,8 +37,9 @@ public class DatabaseWebController {
         }
         List<FileInfo> backupList = databaseService.getBackupList();
         model.addAttribute("backupFiles", backupList);
-        model.addAttribute("databaseVersion", databaseService.getH2Version());
-        if ("Unknown".equalsIgnoreCase(databaseService.getH2Version())) {
+        String dbVersion = databaseService.getH2Version();
+        model.addAttribute("databaseVersion", dbVersion);
+        if ("Unknown".equalsIgnoreCase(dbVersion)) {
             model.addAttribute("infoMessage", "notSupported");
         }
         return "database";

@@ -8,7 +8,9 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
@@ -31,6 +33,7 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 
 import lombok.extern.slf4j.Slf4j;
+
 import stirling.software.SPDF.model.api.misc.AutoSplitPdfRequest;
 import stirling.software.SPDF.service.CustomPDDocumentFactory;
 import stirling.software.SPDF.utils.WebResponseUtils;
@@ -41,8 +44,12 @@ import stirling.software.SPDF.utils.WebResponseUtils;
 @Tag(name = "Misc", description = "Miscellaneous APIs")
 public class AutoSplitPdfController {
 
-    private static final String QR_CONTENT = "https://github.com/Stirling-Tools/Stirling-PDF";
-    private static final String QR_CONTENT_OLD = "https://github.com/Frooodle/Stirling-PDF";
+    private static final Set<String> VALID_QR_CONTENTS =
+            new HashSet<>(
+                    Set.of(
+                            "https://github.com/Stirling-Tools/Stirling-PDF",
+                            "https://github.com/Frooodle/Stirling-PDF",
+                            "https://stirlingpdf.com"));
 
     private final CustomPDDocumentFactory pdfDocumentFactory;
 
@@ -54,8 +61,8 @@ public class AutoSplitPdfController {
     private static String decodeQRCode(BufferedImage bufferedImage) {
         LuminanceSource source;
 
-        if (bufferedImage.getRaster().getDataBuffer() instanceof DataBufferByte) {
-            byte[] pixels = ((DataBufferByte) bufferedImage.getRaster().getDataBuffer()).getData();
+        if (bufferedImage.getRaster().getDataBuffer() instanceof DataBufferByte dataBufferByte) {
+            byte[] pixels = dataBufferByte.getData();
             source =
                     new PlanarYUVLuminanceSource(
                             pixels,
@@ -66,8 +73,9 @@ public class AutoSplitPdfController {
                             bufferedImage.getWidth(),
                             bufferedImage.getHeight(),
                             false);
-        } else if (bufferedImage.getRaster().getDataBuffer() instanceof DataBufferInt) {
-            int[] pixels = ((DataBufferInt) bufferedImage.getRaster().getDataBuffer()).getData();
+        } else if (bufferedImage.getRaster().getDataBuffer()
+                instanceof DataBufferInt dataBufferInt) {
+            int[] pixels = dataBufferInt.getData();
             byte[] newPixels = new byte[pixels.length];
             for (int i = 0; i < pixels.length; i++) {
                 newPixels[i] = (byte) (pixels[i] & 0xff);
@@ -84,7 +92,8 @@ public class AutoSplitPdfController {
                             false);
         } else {
             throw new IllegalArgumentException(
-                    "BufferedImage must have 8-bit gray scale, 24-bit RGB, 32-bit ARGB (packed int), byte gray, or 3-byte/4-byte RGB image data");
+                    "BufferedImage must have 8-bit gray scale, 24-bit RGB, 32-bit ARGB (packed"
+                            + " int), byte gray, or 3-byte/4-byte RGB image data");
         }
 
         BinaryBitmap bitmap = new BinaryBitmap(new HybridBinarizer(source));
@@ -101,7 +110,10 @@ public class AutoSplitPdfController {
     @Operation(
             summary = "Auto split PDF pages into separate documents",
             description =
-                    "This endpoint accepts a PDF file, scans each page for a specific QR code, and splits the document at the QR code boundaries. The output is a zip file containing each separate PDF document. Input:PDF Output:ZIP-PDF Type:SISO")
+                    "This endpoint accepts a PDF file, scans each page for a specific QR code, and"
+                        + " splits the document at the QR code boundaries. The output is a zip file"
+                        + " containing each separate PDF document. Input:PDF Output:ZIP-PDF"
+                        + " Type:SISO")
     public ResponseEntity<byte[]> autoSplitPdf(@ModelAttribute AutoSplitPdfRequest request)
             throws IOException {
         MultipartFile file = request.getFileInput();
@@ -120,13 +132,14 @@ public class AutoSplitPdfController {
             for (int page = 0; page < document.getNumberOfPages(); ++page) {
                 BufferedImage bim = pdfRenderer.renderImageWithDPI(page, 150);
                 String result = decodeQRCode(bim);
-                if ((QR_CONTENT.equals(result) || QR_CONTENT_OLD.equals(result)) && page != 0) {
+
+                boolean isValidQrCode = VALID_QR_CONTENTS.contains(result);
+                log.debug("detected qr code {}, code is vale={}", result, isValidQrCode);
+                if (isValidQrCode && page != 0) {
                     splitDocuments.add(new PDDocument());
                 }
 
-                if (!splitDocuments.isEmpty()
-                        && !QR_CONTENT.equals(result)
-                        && !QR_CONTENT_OLD.equals(result)) {
+                if (!splitDocuments.isEmpty() && !isValidQrCode) {
                     splitDocuments.get(splitDocuments.size() - 1).addPage(document.getPage(page));
                 } else if (page == 0) {
                     PDDocument firstDocument = new PDDocument();
@@ -135,7 +148,7 @@ public class AutoSplitPdfController {
                 }
 
                 // If duplexMode is true and current page is a divider, then skip next page
-                if (duplexMode && (QR_CONTENT.equals(result) || QR_CONTENT_OLD.equals(result))) {
+                if (duplexMode && isValidQrCode) {
                     page++;
                 }
             }
@@ -168,6 +181,9 @@ public class AutoSplitPdfController {
 
             return WebResponseUtils.bytesToWebResponse(
                     data, filename + ".zip", MediaType.APPLICATION_OCTET_STREAM);
+        } catch (Exception e) {
+            log.error("Error in auto split", e);
+            throw e;
         } finally {
             // Clean up resources
             if (document != null) {

@@ -1,6 +1,5 @@
 package stirling.software.SPDF.config;
 
-import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -9,30 +8,24 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Qualifier;
-import org.springframework.context.annotation.DependsOn;
 import org.springframework.stereotype.Service;
 
 import lombok.extern.slf4j.Slf4j;
+
 import stirling.software.SPDF.model.ApplicationProperties;
 
 @Service
 @Slf4j
-@DependsOn({"bookAndHtmlFormatsInstalled"})
 public class EndpointConfiguration {
 
     private static final String REMOVE_BLANKS = "remove-blanks";
     private final ApplicationProperties applicationProperties;
     private Map<String, Boolean> endpointStatuses = new ConcurrentHashMap<>();
     private Map<String, Set<String>> endpointGroups = new ConcurrentHashMap<>();
-    private boolean bookAndHtmlFormatsInstalled;
 
     @Autowired
-    public EndpointConfiguration(
-            ApplicationProperties applicationProperties,
-            @Qualifier("bookAndHtmlFormatsInstalled") boolean bookAndHtmlFormatsInstalled) {
+    public EndpointConfiguration(ApplicationProperties applicationProperties) {
         this.applicationProperties = applicationProperties;
-        this.bookAndHtmlFormatsInstalled = bookAndHtmlFormatsInstalled;
         init();
         processEnvironmentConfigs();
     }
@@ -126,6 +119,7 @@ public class EndpointConfiguration {
         addEndpointToGroup("Convert", "url-to-pdf");
         addEndpointToGroup("Convert", "markdown-to-pdf");
         addEndpointToGroup("Convert", "pdf-to-csv");
+        addEndpointToGroup("Convert", "pdf-to-markdown");
 
         // Adding endpoints to "Security" group
         addEndpointToGroup("Security", "add-password");
@@ -196,8 +190,8 @@ public class EndpointConfiguration {
         addEndpointToGroup("LibreOffice", "pdf-to-html");
         addEndpointToGroup("LibreOffice", "pdf-to-xml");
 
-        // Unoconv
-        addEndpointToGroup("Unoconv", "file-to-pdf");
+        // Unoconvert
+        addEndpointToGroup("Unoconvert", "file-to-pdf");
 
         // qpdf
         addEndpointToGroup("qpdf", "compress-pdf");
@@ -243,6 +237,7 @@ public class EndpointConfiguration {
         addEndpointToGroup("Java", REMOVE_BLANKS);
         addEndpointToGroup("Java", "pdf-to-text");
         addEndpointToGroup("Java", "remove-image-pdf");
+        addEndpointToGroup("Java", "pdf-to-markdown");
 
         // Javascript
         addEndpointToGroup("Javascript", "pdf-organizer");
@@ -258,12 +253,11 @@ public class EndpointConfiguration {
         // Weasyprint dependent endpoints
         addEndpointToGroup("Weasyprint", "html-to-pdf");
         addEndpointToGroup("Weasyprint", "url-to-pdf");
+        addEndpointToGroup("Weasyprint", "markdown-to-pdf");
 
         // Pdftohtml dependent endpoints
         addEndpointToGroup("Pdftohtml", "pdf-to-html");
-
-        // disabled for now while we resolve issues
-        disableEndpoint("pdf-to-pdfa");
+        addEndpointToGroup("Pdftohtml", "pdf-to-markdown");
     }
 
     private void processEnvironmentConfigs() {
@@ -271,12 +265,6 @@ public class EndpointConfiguration {
             List<String> endpointsToRemove = applicationProperties.getEndpoints().getToRemove();
             List<String> groupsToRemove = applicationProperties.getEndpoints().getGroupsToRemove();
 
-            if (!bookAndHtmlFormatsInstalled) {
-                if (groupsToRemove == null) {
-                    groupsToRemove = new ArrayList<>();
-                }
-                groupsToRemove.add("Calibre");
-            }
             if (endpointsToRemove != null) {
                 for (String endpoint : endpointsToRemove) {
                     disableEndpoint(endpoint.trim());

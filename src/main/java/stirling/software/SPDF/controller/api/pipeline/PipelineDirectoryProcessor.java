@@ -5,9 +5,14 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.FileSystemException;
+import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.nio.file.SimpleFileVisitor;
+import java.nio.file.StandardCopyOption;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.time.LocalDate;
 import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
@@ -24,9 +29,11 @@ import org.springframework.stereotype.Service;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import lombok.extern.slf4j.Slf4j;
-import stirling.software.SPDF.config.InstallationPathConfig;
+
+import stirling.software.SPDF.config.RuntimePathConfig;
 import stirling.software.SPDF.model.PipelineConfig;
 import stirling.software.SPDF.model.PipelineOperation;
+import stirling.software.SPDF.model.PipelineResult;
 import stirling.software.SPDF.utils.FileMonitor;
 
 @Service
@@ -49,18 +56,19 @@ public class PipelineDirectoryProcessor {
             ObjectMapper objectMapper,
             ApiDocService apiDocService,
             PipelineProcessor processor,
-            FileMonitor fileMonitor) {
+            FileMonitor fileMonitor,
+            RuntimePathConfig runtimePathConfig) {
         this.objectMapper = objectMapper;
         this.apiDocService = apiDocService;
-        this.watchedFoldersDir = InstallationPathConfig.getPipelineWatchedFoldersDir();
-        this.finishedFoldersDir = InstallationPathConfig.getPipelineFinishedFoldersDir();
+        this.watchedFoldersDir = runtimePathConfig.getPipelineWatchedFoldersPath();
+        this.finishedFoldersDir = runtimePathConfig.getPipelineFinishedFoldersPath();
         this.processor = processor;
         this.fileMonitor = fileMonitor;
     }
 
     @Scheduled(fixedRate = 60000)
     public void scanFolders() {
-        Path watchedFolderPath = Paths.get(watchedFoldersDir);
+        Path watchedFolderPath = Paths.get(watchedFoldersDir).toAbsolutePath();
         if (!Files.exists(watchedFolderPath)) {
             try {
                 Files.createDirectories(watchedFolderPath);
@@ -70,19 +78,33 @@ public class PipelineDirectoryProcessor {
                 return;
             }
         }
-        try (Stream<Path> paths = Files.walk(watchedFolderPath)) {
-            paths.filter(Files::isDirectory)
-                    .forEach(
-                            t -> {
-                                try {
-                                    if (!t.equals(watchedFolderPath) && !t.endsWith("processing")) {
-                                        handleDirectory(t);
-                                    }
-                                } catch (Exception e) {
-                                    log.error("Error handling directory: {}", t, e);
+
+        try {
+            Files.walkFileTree(
+                    watchedFolderPath,
+                    new SimpleFileVisitor<>() {
+                        @Override
+                        public FileVisitResult preVisitDirectory(
+                                Path dir, BasicFileAttributes attrs) {
+                            try {
+                                // Skip root directory and "processing" subdirectories
+                                if (!dir.equals(watchedFolderPath) && !dir.endsWith("processing")) {
+                                    handleDirectory(dir);
                                 }
-                            });
-        } catch (Exception e) {
+                            } catch (Exception e) {
+                                log.error("Error handling directory: {}", dir, e);
+                            }
+                            return FileVisitResult.CONTINUE;
+                        }
+
+                        @Override
+                        public FileVisitResult visitFileFailed(Path path, IOException exc) {
+                            // Handle broken symlinks or inaccessible directories
+                            log.error("Error accessing path: {}", path, exc);
+                            return FileVisitResult.CONTINUE;
+                        }
+                    });
+        } catch (IOException e) {
             log.error("Error walking through directory: {}", watchedFolderPath, e);
         }
     }
@@ -143,19 +165,68 @@ public class PipelineDirectoryProcessor {
 
     private File[] collectFilesForProcessing(Path dir, Path jsonFile, PipelineOperation operation)
             throws IOException {
+
+        List<String> inputExtensions =
+                apiDocService.getExtensionTypes(false, operation.getOperation());
+        log.info(
+                "Allowed extensions for operation {}: {}",
+                operation.getOperation(),
+                inputExtensions);
+
+        boolean allowAllFiles = inputExtensions.contains("ALL");
+
         try (Stream<Path> paths = Files.list(dir)) {
-            if ("automated".equals(operation.getParameters().get("fileInput"))) {
-                return paths.filter(
-                                path ->
-                                        !Files.isDirectory(path)
-                                                && !path.equals(jsonFile)
-                                                && fileMonitor.isFileReadyForProcessing(path))
-                        .map(Path::toFile)
-                        .toArray(File[]::new);
-            } else {
-                String fileInput = (String) operation.getParameters().get("fileInput");
-                return new File[] {new File(fileInput)};
-            }
+            File[] files =
+                    paths.filter(
+                                    path -> {
+                                        if (Files.isDirectory(path)) {
+                                            return false;
+                                        }
+                                        if (path.equals(jsonFile)) {
+                                            return false;
+                                        }
+
+                                        // Get file extension
+                                        String filename = path.getFileName().toString();
+                                        String extension =
+                                                filename.contains(".")
+                                                        ? filename.substring(
+                                                                        filename.lastIndexOf(".")
+                                                                                + 1)
+                                                                .toLowerCase()
+                                                        : "";
+
+                                        // Check against allowed extensions
+                                        boolean isAllowed =
+                                                allowAllFiles
+                                                        || inputExtensions.contains(extension);
+                                        if (!isAllowed) {
+                                            log.info(
+                                                    "Skipping file with unsupported extension: {} ({})",
+                                                    filename,
+                                                    extension);
+                                        }
+                                        return isAllowed;
+                                    })
+                            .map(Path::toAbsolutePath)
+                            .filter(
+                                    path -> {
+                                        boolean isReady =
+                                                fileMonitor.isFileReadyForProcessing(path);
+                                        if (!isReady) {
+                                            log.info(
+                                                    "File not ready for processing (locked/created last 5s): {}",
+                                                    path);
+                                        }
+                                        return isReady;
+                                    })
+                            .map(Path::toFile)
+                            .toArray(File[]::new);
+            log.info(
+                    "Collected {} files for processing for {}",
+                    files.length,
+                    dir.toAbsolutePath().toString());
+            return files;
         }
     }
 
@@ -164,8 +235,35 @@ public class PipelineDirectoryProcessor {
         List<File> filesToProcess = new ArrayList<>();
         for (File file : files) {
             Path targetPath = resolveUniqueFilePath(processingDir, file.getName());
-            Files.move(file.toPath(), targetPath);
-            filesToProcess.add(targetPath.toFile());
+
+            // Retry with exponential backoff
+            int maxRetries = 3;
+            int retryDelayMs = 500;
+            boolean moved = false;
+
+            for (int attempt = 1; attempt <= maxRetries; attempt++) {
+                try {
+                    Files.move(file.toPath(), targetPath, StandardCopyOption.REPLACE_EXISTING);
+                    moved = true;
+                    break;
+                } catch (FileSystemException e) {
+                    if (attempt < maxRetries) {
+                        log.info("File move failed (attempt {}), retrying...", attempt);
+                        try {
+                            Thread.sleep(retryDelayMs * (int) Math.pow(2, attempt - 1));
+                        } catch (InterruptedException e1) {
+                            // TODO Auto-generated catch block
+                            e1.printStackTrace();
+                        }
+                    }
+                }
+            }
+
+            if (moved) {
+                filesToProcess.add(targetPath.toFile());
+            } else {
+                log.error("Failed to move file after {} attempts: {}", maxRetries, file.getName());
+            }
         }
         return filesToProcess;
     }
@@ -198,16 +296,34 @@ public class PipelineDirectoryProcessor {
         try {
             List<Resource> inputFiles =
                     processor.generateInputFiles(filesToProcess.toArray(new File[0]));
-            if (inputFiles == null || inputFiles.size() == 0) {
+            if (inputFiles == null || inputFiles.isEmpty()) {
                 return;
             }
-            List<Resource> outputFiles = processor.runPipelineAgainstFiles(inputFiles, config);
-            if (outputFiles == null) return;
-            moveAndRenameFiles(outputFiles, config, dir);
-            deleteOriginalFiles(filesToProcess, processingDir);
+            PipelineResult result = processor.runPipelineAgainstFiles(inputFiles, config);
+
+            if (result.isHasErrors()) {
+                log.error("Errors occurred during processing, retaining original files");
+                moveToErrorDirectory(filesToProcess, dir);
+            } else {
+                moveAndRenameFiles(result.getOutputFiles(), config, dir);
+                deleteOriginalFiles(filesToProcess, processingDir);
+            }
         } catch (Exception e) {
-            log.error("error during processing", e);
+            log.error("Error during processing", e);
             moveFilesBack(filesToProcess, processingDir);
+        }
+    }
+
+    private void moveToErrorDirectory(List<File> files, Path originalDir) throws IOException {
+        Path errorDir = originalDir.resolve("error");
+        if (!Files.exists(errorDir)) {
+            Files.createDirectories(errorDir);
+        }
+
+        for (File file : files) {
+            Path target = errorDir.resolve(file.getName());
+            Files.move(file.toPath(), target);
+            log.info("Moved failed file to error directory for investigation: {}", target);
         }
     }
 

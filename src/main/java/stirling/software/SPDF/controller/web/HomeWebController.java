@@ -20,6 +20,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.swagger.v3.oas.annotations.Hidden;
 
 import lombok.extern.slf4j.Slf4j;
+
 import stirling.software.SPDF.model.ApplicationProperties;
 import stirling.software.SPDF.model.Dependency;
 
@@ -72,6 +73,12 @@ public class HomeWebController {
     @GetMapping("/home")
     public String root(Model model) {
         return "redirect:/";
+    }
+
+    @GetMapping("/home-legacy")
+    public String homeLegacy(Model model) {
+        model.addAttribute("currentPage", "home-legacy");
+        return "home-legacy";
     }
 
     @GetMapping(value = "/robots.txt", produces = MediaType.TEXT_PLAIN_VALUE)
